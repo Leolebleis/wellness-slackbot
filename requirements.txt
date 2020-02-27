@@ -1,0 +1,7 @@
+Flask
+Jinja2
+requests
+slackclient
+slackeventsapi
+websocket-client
+Werkzeug

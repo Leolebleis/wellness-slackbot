@@ -1,0 +1,110 @@
+# -*- coding: utf-8 -*-
+"""
+In this file, we'll create a routing layer to handle incoming and outgoing
+requests between our bot and Slack.
+"""
+import json
+import jinja2
+from flask import render_template, request, make_response
+from slackeventsapi import SlackEventAdapter
+from bot import Bot
+
+
+my_bot = Bot()
+events_adapter = SlackEventAdapter(my_bot.oauth.get('signing_secret'), endpoint="/slack")
+
+template_loader = jinja2.ChoiceLoader([
+    events_adapter.server.jinja_loader,
+    jinja2.FileSystemLoader(['templates']),
+])
+events_adapter.server.jinja_loader = template_loader
+
+
+@events_adapter.server.route("/install", methods=["GET"])
+def before_install():
+    """
+    This route renders an installation page for our app!
+    """
+    client_id = my_bot.oauth["client_id"]
+    return render_template("install.html", client_id=client_id)
+
+
+@events_adapter.server.route("/thanks", methods=["GET"])
+def thanks():
+    """
+    This route renders a page to thank users for installing our app!
+    """
+    auth_code = request.args.get('code')
+
+    # Now that we have a classy new Bot Class, let's build and use an auth
+    # method for authentication.
+    auth_result = my_bot.auth(auth_code)
+    return render_template("thanks.html", auth_result=auth_result)
+
+
+@events_adapter.on("reaction_added")
+def reaction_added(event_data):
+    event = event_data["event"]
+    emoji = event["reaction"]
+    channel = event["item"]["channel"]
+    text = ":%s:" % emoji
+    print(emoji)
+    my_bot.client.chat_postMessage(channel=channel, text=text)
+
+
+# Error events
+@events_adapter.on("error")
+def error_handler(err):
+    print("ERROR: " + str(err))
+
+
+# Let's add an event handler for messages coming into our bot's test channel
+@events_adapter.on("message")
+def handle_message(event_data):
+    # Grab the message from the event payload
+    message = event_data["event"]
+    # if the user says hello
+    if "hello" in message.get('text'):
+        # have our bot respond to the message
+        my_bot.say_hello(message)
+    else:
+        # otherwise help us find out what went wrong
+        print("This isn't the message we expected: \n%r\n" % message)
+
+
+# Here's some helpful debugging hints for checking that env vars are set
+@events_adapter.server.before_first_request
+def before_first_request():
+    client_id = my_bot.oauth.get("client_id")
+    client_secret = my_bot.oauth.get("client_secret")
+    verification = my_bot.verification
+    if not client_id:
+        print("Can't find Client ID, did you set this env variable?")
+    if not client_secret:
+        print("Can't find Client Secret, did you set this env variable?")
+    if not verification:
+        print("Can't find Verification Token, did you set this env variable?")
+
+
+@events_adapter.server.route("/after_button", methods=['GET', 'POST'])
+def respond():
+    slack_payload = json.loads(request.form.get("payload"))
+    # get the value of the button press
+    action_value = slack_payload["actions"][0].get("value")
+    # handle the action
+    return action_handler(action_value)
+
+
+@events_adapter.on("action")
+def action_handler(action_value):
+    if action_value == "mac":
+        return make_response(my_bot.show_mac(), 200, {'Content-Type':
+                                                     'application/json'})
+    if action_value == "win":
+        return make_response(my_bot.show_win(), 200, {'Content-Type':
+                                                     'application/json'})
+    return "No action handler found for %s type actions" % action_value
+
+
+if __name__ == '__main__':
+    events_adapter.start(debug=True)
